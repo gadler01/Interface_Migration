@@ -5,7 +5,7 @@
 ### 1. Clone Repository
 
 ```bash
-cd /home/grahama
+cd /home/<your_home>
 git clone netbox-interface-migration
 cd netbox-interface-migration
 ```
@@ -28,9 +28,9 @@ pip install -r requirements.txt
 Edit `netbox_json_migration_advanced.py` and update:
 
 ```python
-NETBOX_URL = "https://nbupg.homelan.local"
+NETBOX_URL = "http://localhost:8000"
 API_TOKEN = "nbt_YOUR_FULL_TOKEN_HERE"
-VERIFY_SSL = False
+VERIFY_SSL = True
 ```
 
 ### 5. Test Connection
@@ -68,7 +68,7 @@ See `README.md` for complete operator documentation.
 ### First Time Setup
 
 ```bash
-cd /home/grahama/netbox-interface-migration
+cd /~/netbox-interface-migration
 git config user.email "your@email.com"
 git config user.name "Your Name"
 ```
