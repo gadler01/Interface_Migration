@@ -525,13 +525,83 @@ class NetBoxJSONMigrator:
 
         return stats
 
+    def import_cables_from_json(self, json_file: str, target_site: str) -> Dict[str, int]:
+        """
+        Import cables from JSON to target site.
+        """
+        data = self.load_json(json_file)
+        if not data:
+            return {"total": 0, "created": 0, "failed": 0, "skipped": 0}
+
+        cables_data = data.get("cables", [])
+        if not cables_data:
+            logger.warning("No cables found in JSON file")
+            return {"total": 0, "created": 0, "failed": 0, "skipped": 0}
+
+        logger.info(f"Importing {len(cables_data)} cables to {target_site}")
+
+        stats = {"total": len(cables_data), "created": 0, "failed": 0, "skipped": 0}
+
+        for cable_data in cables_data:
+            cable_name = cable_data.get("name")
+
+            # Check if cable already exists
+            try:
+                check_resp = self.session.get(
+                    f"{self.base_url}/api/dcim/cables/",
+                    params={"name": cable_name}
+                )
+                if check_resp.json()["results"]:
+                    logger.info(f"[SKIP] Cable already exists: {cable_name}")
+                    stats["skipped"] += 1
+                    continue
+            except:
+                pass
+
+            # Build cable payload
+            cable_payload = {
+                "name": cable_name,
+                "type": cable_data.get("type"),
+            }
+
+            # Add optional fields
+            if cable_data.get("length"):
+                cable_payload["length"] = cable_data["length"]
+            if cable_data.get("length_unit"):
+                cable_payload["length_unit"] = cable_data["length_unit"]
+            if cable_data.get("color"):
+                cable_payload["color"] = cable_data["color"]
+            if cable_data.get("label"):
+                cable_payload["label"] = cable_data["label"]
+            if cable_data.get("description"):
+                cable_payload["description"] = cable_data["description"]
+            if cable_data.get("comments"):
+                cable_payload["comments"] = cable_data["comments"]
+            if cable_data.get("status"):
+                cable_payload["status"] = cable_data["status"]
+
+            # Create cable
+            try:
+                resp = self.session.post(
+                    f"{self.base_url}/api/dcim/cables/",
+                    json=cable_payload
+                )
+                resp.raise_for_status()
+                logger.info(f"[OK] Created cable: {cable_name}")
+                stats["created"] += 1
+            except Exception as e:
+                logger.error(f"[FAIL] Failed to create cable {cable_name}: {e}")
+                stats["failed"] += 1
+
+        return stats
+
 
 def main():
     """Main entry point."""
     
     # Configuration
     NETBOX_URL = "https://nbupg.homelan.local"
-    API_TOKEN = "nbt_SA3YmWPeJzAv.e7ty0SdETm3k7attDipZbJeAKCmGevJbepSGEioy"
+    API_TOKEN = "nbt_SA3YmWPeJzAv.<YOUR_TOKEN>"
     VERIFY_SSL = False
 
     # Parse arguments
@@ -561,15 +631,18 @@ COMMANDS:
       python3 script.py export "Site-A" "" export.json --tag "production"
       python3 script.py export "Site-A" "" export_with_cables.json --cables
 
-  import <json_file> <target_site> [target_location] [--connected]
+  import <json_file> <target_site> [target_location] [options]
     Import devices and interfaces from JSON to target site/location
     
-    --connected: Only import interfaces that have cables attached
+    Options:
+      --connected       Only import interfaces that have cables attached
+      --cables-only     Import only cables (skip interfaces)
     
     Examples:
       python3 script.py import export.json "Site-B"
       python3 script.py import export.json "Site-B" "Building-B"
       python3 script.py import export.json "Site-B" "Building-B" --connected
+      python3 script.py import export.json "Site-B" --cables-only
 
   help
     Show this help message
@@ -632,18 +705,21 @@ COMMANDS:
     # Import command
     elif command == "import":
         if len(sys.argv) < 4:
-            print("Usage: python3 script.py import <json_file> <target_site> [target_location] [--connected]")
+            print("Usage: python3 script.py import <json_file> <target_site> [target_location] [options]")
             sys.exit(1)
 
         json_file = sys.argv[2]
         target_site = sys.argv[3]
         target_location = None
         only_connected = False
+        cables_only = False
         
         # Parse remaining arguments
         for arg in sys.argv[4:]:
             if arg == "--connected":
                 only_connected = True
+            elif arg == "--cables-only":
+                cables_only = True
             else:
                 target_location = arg
 
@@ -652,16 +728,30 @@ COMMANDS:
             print("Aborted")
             sys.exit(0)
 
-        stats = migrator.import_from_json(json_file, target_site, target_location, only_connected=only_connected)
-
-        print("\n" + "=" * 70)
-        print("IMPORT SUMMARY")
-        print("=" * 70)
-        print(f"Total:    {stats['total']}")
-        print(f"Created:  {stats['created']} [OK]")
-        print(f"Skipped:  {stats['skipped']} [SKIP]")
-        print(f"Failed:   {stats['failed']} [FAIL]")
-        print("=" * 70)
+        # Import interfaces or cables depending on flag
+        if cables_only:
+            logger.info("Importing cables only (skipping interfaces)")
+            cable_stats = migrator.import_cables_from_json(json_file, target_site)
+            
+            print("\n" + "=" * 70)
+            print("CABLE IMPORT SUMMARY")
+            print("=" * 70)
+            print(f"Total:    {cable_stats['total']}")
+            print(f"Created:  {cable_stats['created']} [OK]")
+            print(f"Skipped:  {cable_stats['skipped']} [SKIP]")
+            print(f"Failed:   {cable_stats['failed']} [FAIL]")
+            print("=" * 70)
+        else:
+            stats = migrator.import_from_json(json_file, target_site, target_location, only_connected=only_connected)
+            
+            print("\n" + "=" * 70)
+            print("INTERFACE IMPORT SUMMARY")
+            print("=" * 70)
+            print(f"Total:    {stats['total']}")
+            print(f"Created:  {stats['created']} [OK]")
+            print(f"Skipped:  {stats['skipped']} [SKIP]")
+            print(f"Failed:   {stats['failed']} [FAIL]")
+            print("=" * 70)
 
     elif command == "help":
         print("See usage above")
