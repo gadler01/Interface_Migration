@@ -79,6 +79,27 @@ class NetBoxJSONMigrator:
             logger.error(f"Error fetching interfaces for device {device_id}: {e}")
             return []
 
+    def get_cables_by_site(self, site_name: str) -> List[Dict]:
+        """Get all cables at a site."""
+        try:
+            params = {"site": site_name, "limit": 5000}
+            resp = self.session.get(f"{self.base_url}/api/dcim/cables/", params=params)
+            resp.raise_for_status()
+            return resp.json()["results"]
+        except Exception as e:
+            logger.error(f"Error fetching cables for site {site_name}: {e}")
+            return []
+
+    def get_all_cables(self) -> List[Dict]:
+        """Get all cables in NetBox."""
+        try:
+            resp = self.session.get(f"{self.base_url}/api/dcim/cables/", params={"limit": 5000})
+            resp.raise_for_status()
+            return resp.json()["results"]
+        except Exception as e:
+            logger.error(f"Error fetching cables: {e}")
+            return []
+
     def filter_devices_by_type(self, devices: List[Dict], device_type: str) -> List[Dict]:
         """Filter devices by type name."""
         filtered = []
@@ -110,7 +131,8 @@ class NetBoxJSONMigrator:
                        export_type: str = "all",
                        device_type: Optional[str] = None,
                        tag: Optional[str] = None,
-                       cabled_only: bool = False) -> str:
+                       cabled_only: bool = False,
+                       include_cables: bool = False) -> str:
         """
         Export devices and interfaces from site/location to JSON.
         
@@ -118,6 +140,7 @@ class NetBoxJSONMigrator:
         device_type: filter by device type (optional)
         tag: filter by device tag (optional)
         cabled_only: only export interfaces with cables
+        include_cables: also export network cables
         """
         msg = f"Exporting devices and interfaces from {site_name}"
         if location_name:
@@ -127,6 +150,8 @@ class NetBoxJSONMigrator:
             msg += f", device_type: {device_type}"
         if tag:
             msg += f", tag: {tag}"
+        if include_cables:
+            msg += ", cables: YES"
         msg += ")"
         logger.info(msg)
 
@@ -157,12 +182,15 @@ class NetBoxJSONMigrator:
             "device_type_filter": device_type,
             "tag_filter": tag,
             "cabled_only": cabled_only,
+            "include_cables": include_cables,
             "export_date": datetime.now().isoformat(),
             "devices": [],
+            "cables": [],
             "summary": {
                 "total_devices": 0,
                 "total_interfaces": 0,
-                "cabled_interfaces": 0
+                "cabled_interfaces": 0,
+                "total_cables": 0
             }
         }
 
@@ -217,6 +245,32 @@ class NetBoxJSONMigrator:
 
             export_data["devices"].append(device_data)
 
+        # Export cables if requested
+        if include_cables:
+            logger.info(f"Fetching cables for site {site_name}")
+            cables = self.get_cables_by_site(site_name)
+            logger.info(f"Found {len(cables)} cables")
+            
+            for cable in cables:
+                cable_data = {
+                    "id": cable.get("id"),
+                    "name": cable.get("name"),
+                    "type": cable.get("type"),
+                    "status": cable.get("status", {}).get("label") if isinstance(cable.get("status"), dict) else cable.get("status"),
+                    "length": cable.get("length"),
+                    "length_unit": cable.get("length_unit"),
+                    "color": cable.get("color"),
+                    "label": cable.get("label"),
+                    "description": cable.get("description"),
+                    "comments": cable.get("comments"),
+                    "a_terminations": cable.get("a_terminations"),
+                    "b_terminations": cable.get("b_terminations"),
+                    "tags": [t.get("name") for t in cable.get("tags", [])]
+                }
+                export_data["cables"].append(cable_data)
+            
+            export_data["summary"]["total_cables"] = len(cables)
+
         # Update summary
         export_data["summary"]["total_devices"] = len(devices)
         export_data["summary"]["total_interfaces"] = total_interface_count
@@ -240,6 +294,8 @@ class NetBoxJSONMigrator:
             print(f"Total Devices:         {export_data['summary']['total_devices']}")
             print(f"Total Interfaces:      {export_data['summary']['total_interfaces']}")
             print(f"Cabled Interfaces:     {export_data['summary']['cabled_interfaces']}")
+            if include_cables:
+                print(f"Network Cables:        {export_data['summary']['total_cables']}")
             print("=" * 70 + "\n")
             
             logger.info(f"✓ Exported to: {output_file}")
@@ -475,7 +531,7 @@ def main():
     
     # Configuration
     NETBOX_URL = "https://nbupg.homelan.local"
-    API_TOKEN = "nbt_SA3YmWPeJzAv.<YOUR_TOKEN>"
+    API_TOKEN = "nbt_SA3YmWPeJzAv.e7ty0SdETm3k7attDipZbJeAKCmGevJbepSGEioy"
     VERIFY_SSL = False
 
     # Parse arguments
@@ -496,12 +552,14 @@ COMMANDS:
       --cabled           Export only interfaces with cables attached
       --device-type NAME Filter by device type
       --tag NAME         Filter by device tag
+      --cables           Also export network cables (for cable calc plugin)
     
     Examples:
       python3 script.py export "Site-A"
       python3 script.py export "Site-A" "Building-A" export.json --cabled
       python3 script.py export "Site-A" "" export.json --device-type "Switch"
       python3 script.py export "Site-A" "" export.json --tag "production"
+      python3 script.py export "Site-A" "" export_with_cables.json --cables
 
   import <json_file> <target_site> [target_location] [--connected]
     Import devices and interfaces from JSON to target site/location
@@ -542,6 +600,7 @@ COMMANDS:
         device_type = None
         tag = None
         cabled_only = False
+        include_cables = False
         
         # Parse remaining arguments
         remaining_args = sys.argv[3:]
@@ -553,6 +612,8 @@ COMMANDS:
             elif arg == "--cabled":
                 export_type = "cabled"
                 cabled_only = True
+            elif arg == "--cables":
+                include_cables = True
             elif arg == "--device-type" and i + 1 < len(remaining_args):
                 device_type = remaining_args[i + 1]
                 i += 1
@@ -566,7 +627,7 @@ COMMANDS:
                     output_file = arg
             i += 1
 
-        migrator.export_to_json(site, location, output_file, export_type, device_type, tag, cabled_only)
+        migrator.export_to_json(site, location, output_file, export_type, device_type, tag, cabled_only, include_cables)
 
     # Import command
     elif command == "import":

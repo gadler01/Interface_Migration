@@ -123,7 +123,7 @@ Edit `netbox_json_migration_advanced.py` and update these lines (around line 350
 
 ```python
 # Configuration
-NETBOX_URL = "https://<YUPR_SERVER_URL>" #
+NETBOX_URL = "https://<YOUR_SERVER_URL>" #
 API_TOKEN = "nbt_<YOUR_KEY>.<YOUR_FULL_TOKEN>"
 VERIFY_SSL = True  # Set to False if using Self-Signed SSL cert
 ```
