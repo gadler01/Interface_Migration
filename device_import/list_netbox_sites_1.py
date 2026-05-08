@@ -31,8 +31,29 @@ import os
 
 # Configuration
 NETBOX_URL = "https://nbupg.homelan.local"
-API_TOKEN = "nbt_SA3YmWPeJzAv.<YOUR_TOKEN_HERE>"  # Update this
+API_TOKEN = None  # Will be prompted or from env var
 VERIFY_SSL = False
+
+def get_api_token():
+    """Get API token from user or environment"""
+    import os
+    
+    # Check environment variable first
+    token = os.getenv("NETBOX_TOKEN")
+    if token:
+        return token
+    
+    # Prompt user
+    print("NetBox API Token required")
+    print("Get token from: https://nbupg.homelan.local/user/api-tokens/")
+    print("")
+    token = input("Enter your NetBox API token (nbt_...): ").strip()
+    
+    if not token:
+        print("❌ Token required")
+        sys.exit(1)
+    
+    return token
 
 def get_site_id(session, site_name):
     """Get site ID by name"""
@@ -85,8 +106,11 @@ def get_device_role_id(session, role_name):
 def create_devices(csv_file, target_site):
     """Create devices from CSV"""
     
+    # Get API token
+    api_token = get_api_token()
+    
     headers = {
-        "Authorization": f"Bearer {API_TOKEN}",
+        "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json"
     }
     
@@ -162,8 +186,16 @@ def create_devices(csv_file, target_site):
                 resp.raise_for_status()
                 print(f"✅ {device_name}: Created")
                 created += 1
+            except requests.exceptions.HTTPError as e:
+                # Show full error response
+                try:
+                    error_detail = resp.json()
+                    print(f"❌ {device_name}: {error_detail}")
+                except:
+                    print(f"❌ {device_name}: {e}")
+                failed += 1
             except Exception as e:
-                print(f"❌ {device_name}: {str(e)[:80]}")
+                print(f"❌ {device_name}: {str(e)}")
                 failed += 1
     
     print("")
